@@ -20,7 +20,6 @@ function getJSONFromFile(fileName) {
     try {
         return JSON.parse(inputBuffer);
     } catch (e) { 
-        console.log(e);
         return {}; 
     }
 }
