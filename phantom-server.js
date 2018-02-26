@@ -1,7 +1,7 @@
-const https = require("https");
+const https = require('https');
 const request = require('request');
 const rp = require('request-promise');
-const phantom = require("phantom");
+const phantom = require('phantom');
 const fs = require('fs');
 
 // Webscraping URL --> pubgBaseRL + <nickname> + pubgNAServer
@@ -51,39 +51,38 @@ function getCaching() {
  * @param {json} nameToIdMapping: a dictionary of name:id mappings
  */
 async function aggregateData(names, nameToIdMapping) {
-    console.log("---- Aggregating Data ----");
+    console.log('---- Aggregating Data ----');
     data = { };
     characters = new Array();
     for(i = 0; i < names.length; i++){
         var username = names[i]; 
-        var id = nameToIdMapping[username]
-        // If id doesn't exist --> webscrape
+        var id = nameToIdMapping[username];
+
+        // If id doesn't exist --> webscrape for it
         if(!id || id === '') {
-            console.log("\tWebscraping for " + username);
-            characters.push(await webScrape(username));
-        // Else just use the direct api
-        } else {
-            console.log("\tApi call for " + username);
-            var characterInfo = await directAPICall(id, username).then((userinfo) => {
-                return userinfo;
-            });
-            characters.push(characterInfo);
+            id = await getCharacterID(username);
         }
+
+        var characterInfo = await directAPICall(id, username).then((userinfo) => {
+            return userinfo;
+        });
+        characters.push(characterInfo);
     }
     data.characters = characters;
 
     // Sorting Array based off of ranking (higher ranking is ranking)
-    data.characters.sort(function(a, b){ return a.ranking < b.ranking });
+    data.characters.sort(function(a, b){ return b.ranking - a.ranking; });
 
     writeJSONToFile('output.json', data);
     updateIDs(data);
 }
 
 /**
- * Using phantomJS this scrapes pubg.op.gg for pubg character info.
+ * Using phantomJS this scrapes pubg.op.gg for pubg character id.
  * @param {string} username: pubg username 
  */
-async function webScrape(username) {
+async function getCharacterID(username) {
+    console.log('\tWebscraping for ' + username);
     // Setup PhantomJS Page
     const instance = await phantom.create();
     const page = await instance.createPage();
@@ -93,21 +92,19 @@ async function webScrape(username) {
     await page.open(url);
     await page.includeJs('http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js');
     
-    var characterData = await page.evaluate(function() {
-        data = { id: 0, nickname: '', ranking: '', topPercent: '' };
-
-        var idElement = $("#userNickname")
-        data.id = idElement.attr('data-user_id');
-        data.nickname = idElement.html().trim();
-        data.ranking = $('.ranked-stats__rating-point').last().html().trim();
-        data.topPercent = $('.ranked-stats__rate--squad').html().trim()
-
-        return data;
+    var id = await page.evaluate(function() {
+        try {
+            var idElement = $('#userNickname')
+            return idElement.attr('data-user_id');
+        } catch(err) {
+            console.error('Id element does not exist');
+            return -1;
+        }
     });
 
     // Cleanup PhantomJS
     await instance.exit();
-    return characterData;
+    return id;
 }
 
 /**
@@ -116,17 +113,25 @@ async function webScrape(username) {
  * @param {string} username: pubg username
  */
 async function directAPICall(id, username) {
+    console.log('\tApi call for ' + username);
     var url = directBaseAPIURL + id + APIOptionsURL;
     var characterData = {};
 
     return rp({ url: url, json: true }).then((json) => {
-        var data = { 
+        return { 
             id: id, 
             nickname: username, 
             ranking: json.stats.rating, 
             topPercent: (json.ranks.rating/json.max_ranks.rating)*100 
         };
-        return data;
+    }, function(err) {
+        console.log('\t\tInvalid season data');
+        return {
+            id: id,
+            nickname: username,
+            ranking: 0,
+            topPercent: 100
+        }
     });
 }
 
